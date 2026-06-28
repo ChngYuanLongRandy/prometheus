@@ -1,0 +1,32 @@
+# Secrets
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# Python (scraper)
+__pycache__/
+*.pyc
+scraper/.venv/
+.pytest_cache/
+.mypy_cache/
+
+# Java (backend)
+backend/target/
+*.class
+
+# Node (frontend)
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+*.tsbuildinfo
+
+# Playwright
+backend/playwright-report/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml

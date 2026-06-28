@@ -1,0 +1,44 @@
+# Project Prometheus — A1 local orchestration.
+# Postgres is Supabase (external/managed), so it is NOT a service here — the
+# backend connects out to it using credentials from .env.
+#
+#   docker compose up --build
+#
+# Services:
+#   scraper  :8000  — stateless Python extraction service (no DB access)
+#   backend  :8080  — Spring Boot REST API + scheduler (owns all DB access)
+#   frontend :5173  — React app (nginx), talks only to the backend
+
+services:
+  scraper:
+    build: ./scraper
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      # Inside the compose network the backend reaches the scraper by name,
+      # overriding the localhost value used for native dev.
+      SCRAPER_BASE_URL: http://scraper:8000
+      CORS_ALLOWED_ORIGINS: http://localhost:5173
+    depends_on:
+      - scraper
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Browser runs on the host, so it reaches the backend via the mapped port.
+        VITE_API_BASE_URL: http://localhost:8080
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
