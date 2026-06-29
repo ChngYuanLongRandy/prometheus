@@ -1,11 +1,12 @@
+import { useState } from "react";
 import type { UpdateItem } from "../types";
 
 interface Props {
   updates: UpdateItem[];
+  onGenerateAudio: (id: string) => Promise<void>;
 }
 
 function DiffPreview({ diff }: { diff: string }) {
-  // Show the meaningful diff lines (added/removed), capped for preview.
   const lines = diff
     .split("\n")
     .filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l))
@@ -27,10 +28,25 @@ function DiffPreview({ diff }: { diff: string }) {
   );
 }
 
-export function UpdateFeed({ updates }: Props) {
+export function UpdateFeed({ updates, onGenerateAudio }: Props) {
+  const [generating, setGenerating] = useState<Set<string>>(new Set());
+
   if (updates.length === 0) {
     return <p className="empty">No changes detected yet.</p>;
   }
+
+  const handleGenerate = async (id: string) => {
+    setGenerating((prev) => new Set(prev).add(id));
+    try {
+      await onGenerateAudio(id);
+    } finally {
+      setGenerating((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
 
   return (
     <ul className="update-feed">
@@ -49,6 +65,19 @@ export function UpdateFeed({ updates }: Props) {
             <span className="count-del">−{u.removedLines}</span>
           </div>
           <DiffPreview diff={u.diff} />
+          {u.audioUrl ? (
+            <div className="audio-wrap">
+              <audio className="audio-player" controls src={u.audioUrl} />
+            </div>
+          ) : (
+            <button
+              className="btn btn-audio"
+              onClick={() => handleGenerate(u.id)}
+              disabled={generating.has(u.id)}
+            >
+              {generating.has(u.id) ? "Generating…" : "Generate audio"}
+            </button>
+          )}
         </li>
       ))}
     </ul>

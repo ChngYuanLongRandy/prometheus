@@ -13,11 +13,12 @@ public record UpdateView(
         String diff,
         int addedLines,
         int removedLines,
-        OffsetDateTime detectedAt
+        OffsetDateTime detectedAt,
+        String audioUrl
 ) {
-    public static UpdateView of(UpdateRecord u, String url, String label) {
+    public static UpdateView of(UpdateRecord u, String url, String label, String audioUrl) {
         return new UpdateView(
                 u.getId(), u.getUrlId(), url, label, u.getDiff(),
-                u.getAddedLines(), u.getRemovedLines(), u.getDetectedAt());
+                u.getAddedLines(), u.getRemovedLines(), u.getDetectedAt(), audioUrl);
     }
 }

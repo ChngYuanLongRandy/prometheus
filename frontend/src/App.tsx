@@ -53,12 +53,17 @@ export default function App() {
     }
   };
 
+  const generateAudio = async (id: string) => {
+    await api.generateAudio(id);
+    await refresh();
+  };
+
   return (
     <div className="app">
       <header className="header">
         <div>
           <h1>PROMETHEUS</h1>
-          <span className="subtitle">web watcher · A1</span>
+          <span className="subtitle">web watcher · A2</span>
         </div>
         <button className="btn" onClick={checkAll} disabled={checkingAll}>
           {checkingAll ? "Checking all…" : "Check all"}
@@ -76,7 +81,7 @@ export default function App() {
 
       <section>
         <h2 className="section-title">Updates ({updates.length})</h2>
-        <UpdateFeed updates={updates} />
+        <UpdateFeed updates={updates} onGenerateAudio={generateAudio} />
       </section>
     </div>
   );

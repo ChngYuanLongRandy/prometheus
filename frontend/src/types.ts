@@ -18,6 +18,7 @@ export interface UpdateItem {
   addedLines: number;
   removedLines: number;
   detectedAt: string;
+  audioUrl: string | null;
 }
 
 export interface CheckResult {

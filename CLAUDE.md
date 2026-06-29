@@ -4,19 +4,21 @@ Context-recovery doc for future sessions. Read this first.
 
 ## What this is
 
-Personal information OS that watches the web and (eventually) delivers updates
-as audio. Built in phases. **This repo currently implements Phase A1 — the Web
-Watcher MVP.** Single-user, self-hosted, no auth. See `SPEC.md` for the full
+Personal information OS that watches the web and delivers updates as audio.
+Built in phases. **This repo currently implements Phase A2 — Web Watcher +
+Audio Digest.** Single-user, self-hosted, no auth. See `SPEC.md` for the full
 vision and phase roadmap.
 
-## Architecture (A1)
+## Architecture (A2)
 
-Three decoupled services in a monorepo + external Supabase Postgres.
+Three decoupled services in a monorepo + external Supabase Postgres + Amazon S3.
 
 ```
 React (frontend) ──HTTP──▶ Spring Boot (backend) ──HTTP──▶ Python (scraper)
                                    │
-                                   └──JDBC──▶ Supabase Postgres
+                                   ├──JDBC──▶ Supabase Postgres
+                                   ├──HTTP──▶ Amazon Polly (TTS)
+                                   └──HTTP──▶ Amazon S3 (audio .mp3 files)
 ```
 
 - **scraper/** — stateless Python (FastAPI) extraction service. Given a URL,
@@ -25,9 +27,11 @@ React (frontend) ──HTTP──▶ Spring Boot (backend) ──HTTP──▶ P
   refactoring. Talks to nothing; only answers `POST /scrape`.
 - **backend/** — Spring Boot (Java 21). **Sole owner of all database access.**
   Calls the scraper over HTTP, diffs against the last snapshot, persists
-  snapshots + updates. Hosts the REST API and the daily scheduler.
+  snapshots + updates. On change: publishes a post-commit event that triggers
+  Polly TTS + S3 upload (best-effort, never blocks change detection).
+  Hosts the REST API and the daily scheduler.
 - **frontend/** — React + Vite + TS. Talks **only** to the backend REST API,
-  never to Supabase directly (no Supabase keys in the frontend in A1).
+  never to Supabase or AWS directly.
 - **supabase/migrations/** — SQL schema. Backend owns these tables.
 
 > Keep the scraper boundary clean. If you find yourself sharing code or DB
@@ -55,10 +59,43 @@ React (frontend) ──HTTP──▶ Spring Boot (backend) ──HTTP──▶ P
       feed → delete (cascade). All six endpoints exercised; pooler connection,
       schema `validate`, and cascade delete all confirmed working.
 
+## Status — DONE in A2
+
+- [x] Amazon Polly TTS — standard Joanna voice (en-US). Chunks text at 3,000
+      chars; max 9,000 chars (3 chunks) per clip; longer content truncated.
+      Speech text = "Change detected at [label]. Added N / removed M lines.
+      New content: [extracted added lines]."
+- [x] Amazon S3 audio storage — private bucket, ap-southeast-1. Pre-signed
+      GET URLs (1-hour expiry) generated at read time by the backend.
+      Objects stored at key `audio/<update-uuid>.mp3`.
+- [x] Supabase migration `0002_audio.sql` — `audio_clips` table:
+      `id`, `update_id` (FK→updates, UNIQUE), `s3_key`, `char_count`,
+      `created_at`. Index on `created_at` for the cleanup job.
+- [x] Best-effort audio wiring — `@TransactionalEventListener(AFTER_COMMIT)`
+      fires after the change-detection transaction commits; TTS failure never
+      rolls back or blocks the update record.
+- [x] New backend endpoints:
+      `GET /updates` — now includes `audioUrl` (pre-signed, null if no clip).
+      `POST /updates/{id}/generate-audio` — manual (re)generate.
+- [x] 30-day cleanup scheduler (`AudioCleanupScheduler`, 03:00 UTC daily) —
+      deletes S3 objects and `audio_clips` rows older than 30 days.
+- [x] React frontend — `<audio controls>` player in update feed when audio
+      exists; "Generate audio" button with per-item loading state when it
+      doesn't. Version subtitle bumped to A2.
+- [x] AWS IAM least-privilege policy: `polly:Synthesize*` + `s3:PutObject /
+      GetObject / DeleteObject` scoped to `audio/` prefix of one bucket.
+      Credentials via env vars (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`).
+- [x] `docker-compose.yml` and `.env.example` updated with AWS vars.
+
 ### Done by YOU (already complete)
 
-- [x] Supabase migration run (schema `validate` passes, so tables exist).
+- [x] Supabase migration 0001 run (schema `validate` passes, tables exist).
 - [x] `.env` populated with Session-pooler credentials.
+- [ ] **Run Supabase migration `0002_audio.sql`** (paste into SQL editor).
+- [ ] **Create S3 bucket** in ap-southeast-1, all public access blocked.
+- [ ] **Create IAM user** `prometheus-tts` with `prometheus-tts-policy`;
+      generate access key and add to `.env`.
+- [ ] Add `AWS_S3_AUDIO_BUCKET=your-bucket-name` to `.env`.
 
 ### Next time you run it
 
@@ -128,15 +165,37 @@ docker compose up --build
   return 422.
 - **Diff** is line-based unified diff over the extracted text; equality is
   short-circuited by SHA-256 hash before diffing.
+- **TTS wiring uses `@TransactionalEventListener(AFTER_COMMIT)`**: the event
+  is published inside `WatcherService.check()` but delivered after the
+  transaction commits, so the `audio_clips` FK to `updates` is always valid
+  and TTS failure cannot affect the update record.
+- **Polly standard Joanna / 3,000-char limit**: text > 3,000 chars is chunked
+  and MP3 streams are concatenated (standard MP3 streams concatenate cleanly
+  for speech). Hard cap at 9,000 chars (3 chunks); beyond that, truncated with
+  "... content truncated." to control costs.
+- **S3 pre-signed URLs**: 1-hour expiry. The stored value in `audio_clips` is
+  the S3 key (`audio/<uuid>.mp3`), not the URL. The backend generates fresh
+  pre-signed URLs on every `GET /updates` call. Never expose AWS credentials
+  or keys to the frontend.
+- **AWS credential chain**: `AwsConfig` beans use `DefaultCredentialsProvider`
+  (no explicit credentials in Java code). The SDK reads `AWS_ACCESS_KEY_ID`
+  and `AWS_SECRET_ACCESS_KEY` from the environment automatically.
 
-## What comes next — A2 (audio)
+## What comes next
 
-- Summarise each detected `update` (LLM) into a short briefing.
-- Synthesize speech; store audio files in **Supabase Storage** (new in A2 —
-  A1 is Postgres only).
-- Surface/play audio in the frontend; likely a per-update "listen" action.
-- Boundaries stay the same: backend owns persistence + storage; scraper stays
-  stateless and untouched.
+### A2.5 — playback testing
+- End-to-end test: add URL → trigger check → wait for TTS → verify audio
+  player appears in the feed.
+- Confirm IAM policy is tight: test that the credentials cannot write to other
+  buckets or call non-Polly/non-S3 AWS APIs.
+- Verify 30-day cleanup by manually creating a clip with a backdated
+  `created_at` and running the scheduler.
+
+### A3 — WhatsApp notifications
+- On each detected change (or daily digest), send a WhatsApp message with the
+  summary and a link to the audio clip.
+- Likely via the WhatsApp Business Cloud API or Twilio.
+- Backend owns the notification logic; no new services needed if HTTP-based.
 
 ## Deployment targets (later)
 

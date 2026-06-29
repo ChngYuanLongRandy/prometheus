@@ -39,4 +39,7 @@ export const api = {
     req<{ checked: number; status: string }>("/check-all", { method: "POST" }),
 
   listUpdates: () => req<UpdateItem[]>("/updates"),
+
+  generateAudio: (id: string) =>
+    req<UpdateItem>(`/updates/${id}/generate-audio`, { method: "POST" }),
 };

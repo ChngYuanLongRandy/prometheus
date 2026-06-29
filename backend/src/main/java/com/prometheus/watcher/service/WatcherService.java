@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.prometheus.watcher.event.UpdateDetectedEvent;
 import com.prometheus.watcher.model.Snapshot;
 import com.prometheus.watcher.model.TrackedUrl;
 import com.prometheus.watcher.model.UpdateRecord;
@@ -19,6 +20,7 @@ import com.prometheus.watcher.scraper.ScrapeResult;
 import com.prometheus.watcher.scraper.ScraperClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,14 +41,17 @@ public class WatcherService {
     private final UpdateRepository updates;
     private final ScraperClient scraper;
     private final DiffService diffService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public WatcherService(TrackedUrlRepository urls, SnapshotRepository snapshots,
-                          UpdateRepository updates, ScraperClient scraper, DiffService diffService) {
+                          UpdateRepository updates, ScraperClient scraper, DiffService diffService,
+                          ApplicationEventPublisher eventPublisher) {
         this.urls = urls;
         this.snapshots = snapshots;
         this.updates = updates;
         this.scraper = scraper;
         this.diffService = diffService;
+        this.eventPublisher = eventPublisher;
     }
 
     /** Result of checking one URL, for surfacing to callers/logs. */
@@ -88,12 +93,14 @@ public class WatcherService {
             DiffService.DiffResult diff = diffService.diff(prev.getContent(), content);
             Snapshot newSnap = snapshots.save(
                     new Snapshot(tracked.getId(), content, hash, result.charCount(), result.method()));
-            updates.save(new UpdateRecord(
+            UpdateRecord saved = updates.save(new UpdateRecord(
                     tracked.getId(), newSnap.getId(), prev.getId(),
                     diff.unifiedDiff(), diff.addedLines(), diff.removedLines()));
             markChecked(tracked, "changed", result.method(), null);
             log.info("Change detected for {} (+{} -{})", tracked.getUrl(),
                     diff.addedLines(), diff.removedLines());
+            // Best-effort audio: event fires after this transaction commits.
+            eventPublisher.publishEvent(new UpdateDetectedEvent(saved.getId()));
             return Outcome.CHANGED;
 
         } catch (Exception ex) {
