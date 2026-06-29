@@ -50,14 +50,20 @@ React (frontend) ──HTTP──▶ Spring Boot (backend) ──HTTP──▶ P
       manual check + delete, update feed with diff preview. Dark utilitarian UI.
 - [x] `docker-compose.yml` for all three services.
 
-### Not yet done / needs YOU
+- [x] **End-to-end verified against the live Supabase DB** (2026-06-29):
+      add URL → scrape → first snapshot → re-check → diff (+19/−23) → update
+      feed → delete (cascade). All six endpoints exercised; pooler connection,
+      schema `validate`, and cascade delete all confirmed working.
 
-- [ ] **Run the Supabase migration** (`supabase/migrations/0001_init.sql`) in
-      the Supabase SQL editor.
-- [ ] **Fill `.env`** from `.env.example` with the Supabase connection string.
-      The backend will not start without it (`SPRING_DATASOURCE_*`).
-- [ ] End-to-end run has not been executed against a live DB yet (no creds at
-      build time). Scraper and both builds are independently verified.
+### Done by YOU (already complete)
+
+- [x] Supabase migration run (schema `validate` passes, so tables exist).
+- [x] `.env` populated with Session-pooler credentials.
+
+### Next time you run it
+
+- Native backend needs `JAVA_HOME` set and `.env` exported into the shell
+  (see "How to run"). Start order: scraper :8000 → backend :8080 → frontend.
 
 ## How to run
 
@@ -108,7 +114,15 @@ docker compose up --build
   `none` in `backend/src/main/resources/application.properties`.
 - **Supabase connection**: prefer the **Session pooler** (port 5432) for a
   long-lived Hikari pool. Avoid the Transaction pooler (6543) — it breaks JPA
-  prepared statements. JDBC URL needs `?sslmode=require`.
+  prepared statements. JDBC URL needs `?sslmode=require`. Username is
+  ref-qualified: `postgres.<project-ref>`.
+- **Pooler host gotcha (cost us a boot)**: this project lives on Supabase's
+  newer pooler infra — the correct host is
+  `aws-1-ap-southeast-1.pooler.supabase.com`, NOT `aws-0-…`. The `aws-0` host
+  resolves and accepts the TCP connection but Supavisor rejects the tenant with
+  `FATAL: (ENOTFOUND) tenant/user postgres.<ref> not found`. If you ever see
+  that error, it's the host prefix/region, not the password — copy the exact
+  string from Dashboard → Connect → Session pooler.
 - **Scraper "sufficient content" threshold** is 200 chars
   (`SCRAPER_MIN_CONTENT_CHARS`). Tiny pages (e.g. example.com) legitimately
   return 422.
